@@ -1,16 +1,21 @@
 /**
- * RegionCacheKeeper v1.5
+ * RegionCacheKeeper v2.0
  * ============================================================
- * 无根外币模式 + 切号插件功能 (精简版, 去掉越狱屏蔽/全局hook)
+ * 无根外币同款 hook (一模一样, 纯 ObjC) + 切号(请求层注入)
  *
- *  - 请求层(切号): SKProductsRequest 注入 CN storefront header
- *                  → 苹果返回真实国区 SKProduct (价格数字就是 CNY)
- *  - 缓存层(切号): SKProductsResponse 收到的商品进缓存
- *  - 支付层(切号): 发起支付时替换为缓存的国区 SKProduct
- *  - 显示层(外币): SKProduct.priceLocale / NSLocale 伪装 zh_CN
- *                  (Swift 端增强见 SK2SwiftHook.swift, 无根外币同款)
+ * 无根外币部分(1.17 版本已验证同款):
+ *   %hook SKProduct   -priceLocale                    → zh_CN
+ *   %hook NSLocale    -localeIdentifier               → zh_CN@currency=CNY
+ *   %hook NSLocale    +localeWithLocaleIdentifier:    → zh_CN@currency=CNY
+ *   %hook NSLocale    +canonicalLanguageIdentifierFromString: → zh
  *
- *  - 无越狱屏蔽, 无界面, 安装即生效
+ * 切号部分(RegionCacheKeeper):
+ *   %hook SKProductsRequest  -_urlRequest  注入 X-Apple-Store-Front: CHN
+ *                                          → 苹果返回真实国区商品(价格数字变 CNY)
+ *   %hook SKProductsResponse -products     国区商品进缓存
+ *   %hook SKPayment/SKPaymentQueue         支付时替换为缓存的国区商品
+ *
+ * 无越狱屏蔽, 无界面, 安装即生效
  * ============================================================
  */
 
@@ -40,7 +45,47 @@ static BOOL RCKIsThirdPartyApp(void) {
     return [NSBundle mainBundle].bundleIdentifier.length > 0;
 }
 
-#pragma mark - 1. 请求层(切号): SKProductsRequest 注入 CN storefront
+#pragma mark - 无根外币同款: SKProduct.priceLocale
+
+%hook SKProduct
+
+- (NSLocale *)priceLocale {
+    static NSLocale *fakeLocale = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        fakeLocale = [NSLocale localeWithLocaleIdentifier:RCK_TARGET_LOCALE_STR];
+    });
+    return fakeLocale;
+}
+
+%end
+
+#pragma mark - 无根外币同款: NSLocale 三个方法
+
+%hook NSLocale
+
+// 1) 实例 localeIdentifier: 非 zh 一律返回 zh_CN@currency=CNY
+- (NSString *)localeIdentifier {
+    NSString *orig = %orig;
+    if ([orig hasPrefix:@"zh"]) return orig;
+    return RCK_TARGET_LOCALE_ID;
+}
+
+// 2) 类方法 localeWithLocaleIdentifier: 强制构造目标 locale
++ (NSLocale *)localeWithLocaleIdentifier:(NSString *)identifier {
+    return %orig(RCK_TARGET_LOCALE_ID);
+}
+
+// 3) 类方法 canonicalLanguageIdentifierFromString: 非 zh 返回 zh-Hans
++ (NSString *)canonicalLanguageIdentifierFromString:(NSString *)string {
+    NSString *orig = %orig;
+    if ([orig hasPrefix:@"zh"]) return orig;
+    return @"zh-Hans";
+}
+
+%end
+
+#pragma mark - 切号: 请求层注入 CN storefront
 
 %hook SKProductsRequest
 
@@ -56,7 +101,7 @@ static BOOL RCKIsThirdPartyApp(void) {
 
 %end
 
-#pragma mark - 2. 缓存层(切号): 响应里的国区 SKProduct 进缓存
+#pragma mark - 切号: 响应里的国区 SKProduct 进缓存
 
 %hook SKProductsResponse
 
@@ -75,33 +120,7 @@ static BOOL RCKIsThirdPartyApp(void) {
 
 %end
 
-#pragma mark - 3. 显示层(外币): SKProduct.priceLocale
-
-%hook SKProduct
-
-- (NSLocale *)priceLocale {
-    static NSLocale *fakeLocale = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        fakeLocale = [[NSLocale alloc] initWithLocaleIdentifier:RCK_TARGET_LOCALE_STR];
-    });
-    return fakeLocale;
-}
-
-%end
-
-%hook NSLocale
-
-// hook localeIdentifier getter, 防止 App 自己检查 locale
-- (NSString *)localeIdentifier {
-    NSString *orig = %orig;
-    if ([orig hasPrefix:@"zh"]) return orig;   // 已经是中文的就不动
-    return RCK_TARGET_LOCALE_ID;
-}
-
-%end
-
-#pragma mark - 4. 支付层(切号): 替换为缓存的国区 SKProduct
+#pragma mark - 切号: 支付时替换为缓存的国区商品
 
 %hook SKPayment
 
@@ -154,22 +173,6 @@ static BOOL RCKIsThirdPartyApp(void) {
     %orig;
 }
 
-// 伪装 storefront 返回 CHN
-- (id)storefront {
-    static id fakeStorefront = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        Class cls = objc_getClass("SKStorefront");
-        if (cls) {
-            fakeStorefront = [[cls alloc] init];
-            @try { [fakeStorefront setValue:RCK_TARGET_STOREFRONT forKey:@"identifier"]; } @catch (NSException *e) {}
-            @try { [fakeStorefront setValue:RCK_TARGET_STOREFRONT forKey:@"countryCode"]; } @catch (NSException *e) {}
-        }
-    });
-    if (fakeStorefront) return fakeStorefront;
-    return %orig;
-}
-
 %end
 
 #pragma mark - 注入入口
@@ -178,14 +181,6 @@ static BOOL RCKIsThirdPartyApp(void) {
     @autoreleasepool {
         if (!RCKIsThirdPartyApp()) return;
         gProductCache = [NSMutableDictionary dictionary];
-
-        NSLog(@"[RCK] v1.5 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
-
-        // Swift 端(无根外币同款): NSLocale init/canonicalLanguage/components
-        Class cls = objc_getClass("SK2SwiftHook");
-        if (!cls) cls = objc_getClass("RegionCacheKeeper.SK2SwiftHook");
-        if (cls && [cls respondsToSelector:@selector(install)]) {
-            [cls performSelector:@selector(install)];
-        }
+        NSLog(@"[RCK] v2.0 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
     }
 }
