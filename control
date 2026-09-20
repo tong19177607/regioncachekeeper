@@ -1,0 +1,9 @@
+Package: com.yourshop.regioncachekeeper
+Name: RegionCacheKeeper
+Version: 1.2.0-1
+Architecture: iphoneos-arm64
+Description: 自动国区 IAP 商品缓存 + 越狱检测屏蔽，安装即生效
+Maintainer: you
+Author: you
+Section: Utilities
+Depends: mobilesubstrate

@@ -1,0 +1,41 @@
+name: build-regioncachekeeper
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Theos make package (rootless)
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          brew update
+          brew install make xz zstd dpkg ldid
+
+      - name: Install Theos
+        run: |
+          export THEOS="$HOME/theos"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Build .deb
+        run: |
+          make clean
+          make package THEOS_PLATFORM_DEB_COMPRESSION_TYPE=gzip
+
+      - name: List build output
+        run: ls -la packages/
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RegionCacheKeeper-deb
+          path: packages/*.deb
+          if-no-files-found: error
