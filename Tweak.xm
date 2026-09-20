@@ -137,7 +137,7 @@ static BOOL RCKIsThirdPartyApp(void) {
 
 - (void)addPayment:(SKPayment *)payment {
     SKProduct *product = nil;
-    @try { product = [payment product]; } @catch (NSException *e) { product = nil; }
+    @try { product = [payment valueForKey:@"product"]; } @catch (NSException *e) { product = nil; }
 
     if (product && product.productIdentifier) {
         SKProduct *cached = gProductCache[product.productIdentifier];
