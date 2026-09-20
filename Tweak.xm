@@ -33,7 +33,7 @@ static NSString * const RCK_TARGET_LOCALE_STR = @"zh_CN";
 // ===== 全局 product cache =====
 static NSMutableDictionary *gProductCache = nil;   // productIdentifier -> SKProduct
 
-void JBShieldInit(void);
+extern "C" void JBShieldInit(void);
 
 #pragma mark - 注入门控(只对第三方 App 生效)
 
