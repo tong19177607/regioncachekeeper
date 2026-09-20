@@ -36,6 +36,16 @@ static NSMutableDictionary *gProductCache = nil;   // productIdentifier -> SKPro
 extern "C" void JBShieldInit(void);
 extern "C" void SK2HookInit(void);
 
+// Swift bridge
+@class SK2SwiftHook;
+static inline void SK2SwiftInstall(void) {
+    Class cls = objc_getClass("RegionCacheKeeper.SK2SwiftHook");
+    if (!cls) cls = objc_getClass("SK2SwiftHook");
+    if (cls && [cls respondsToSelector:@selector(install)]) {
+        [cls performSelector:@selector(install)];
+    }
+}
+
 #pragma mark - 注入门控(只对第三方 App 生效)
 
 static BOOL RCKIsThirdPartyApp(void) {
@@ -201,8 +211,9 @@ static BOOL RCKIsThirdPartyApp(void) {
 %ctor {
     @autoreleasepool {
         if (!RCKIsThirdPartyApp()) return;
-        NSLog(@"[RCK] v1.3 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
+        NSLog(@"[RCK] v1.4 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
         JBShieldInit();
         SK2HookInit();
+        SK2SwiftInstall();
     }
 }
