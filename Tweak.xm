@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RegionCacheKeeper v1.0.0（全新起点）
  * ============================================================
  * 目标：国区上架的 IAP 商品，在登录外区 Apple ID 时也能正常购买。
@@ -277,8 +277,7 @@ static NSString *RCKHeaderValue(NSDictionary *headers, NSString *name) {
 %hook SKStorefront
 
 - (NSString *)countryCode {
-    NSString *orig = nil;
-    @try { orig = %orig; } @catch (NSException *e) {}
+    NSString *orig = %orig;
     RCKLogOnce(@"SKStorefront.countryCode",
                @"App READ SKStorefront.countryCode orig=%@ -> %@",
                orig, RCK_COUNTRY_CODE);
@@ -286,8 +285,7 @@ static NSString *RCKHeaderValue(NSDictionary *headers, NSString *name) {
 }
 
 - (NSString *)identifier {
-    NSString *orig = nil;
-    @try { orig = %orig; } @catch (NSException *e) {}
+    NSString *orig = %orig;
     RCKLogOnce(@"SKStorefront.identifier",
                @"App READ SKStorefront.identifier orig=%@ -> %@",
                orig, RCK_STOREFRONT_ID);
@@ -308,7 +306,7 @@ static NSString *RCKHeaderValue(NSDictionary *headers, NSString *name) {
         RCKLogOnce(@"SKPaymentQueue.storefront",
                    @"App READ paymentQueue.storefront -> orig code=%@ id=%@",
                    sf.countryCode, sf.identifier);
-    } @catch (NSException *e) {}
+    } @catch (NSException *e) { /* 只读记录，忽略 */ }
     return sf;
 }
 
