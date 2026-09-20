@@ -1,35 +1,29 @@
 /**
- * RegionCacheKeeper v2.1
+ * RegionCacheKeeper v2.2
  * ============================================================
- * 无根外币同款 hook (从其 dylib 符号逐个还原, 纯 ObjC) + 切号(请求层注入)
+ * 100% 照抄无根外币(txwz.dylib 逆向确认的 6 个 hook), 纯 ObjC
  *
- * 无根外币同款 5 hook:
- *   SKProduct          -priceLocale                        → zh_CN
- *   _NSPlaceholderLocale -initWithLocaleIdentifier:        → zh_CN@currency=CNY (私有类!)
- *   NSLocale           -localeIdentifier                   → zh_CN@currency=CNY
- *   NSLocale           +localeWithLocaleIdentifier:        → zh_CN@currency=CNY
- *   NSLocale           +canonicalLanguageIdentifierFromString: → zh
+ * 用途: 国区 App 内购商品, 用美区(其他区) Apple ID 也能下单。
+ *       页面价格不变, 系统支付弹窗按账号所在区收外币(如 ¥6 档 → $1),
+ *       付款后商品正常到账。
  *
- * 切号部分(RegionCacheKeeper):
- *   %hook SKProductsRequest  -_urlRequest  注入 X-Apple-Store-Front: CHN
- *                                          → 苹果返回真实国区商品(价格数字变 CNY)
- *   %hook SKProductsResponse -products     国区商品进缓存
- *   %hook SKPayment/SKPaymentQueue         支付时替换为缓存的国区商品
+ * 无根外币同款 6 hook:
+ *   SKProduct             -price          (页面原价, 不改)
+ *   SKProduct             -priceLocale    → zh_CN locale
+ *   _NSPlaceholderLocale  -initWithLocaleIdentifier: → zh_CN@currency=CNY
+ *   NSLocale              -localeIdentifier
+ *   NSLocale              +localeWithLocaleIdentifier:
+ *   NSLocale              +canonicalLanguageIdentifierFromString:
  *
- * 无越狱屏蔽, 无界面, 安装即生效
+ * 不做(无根外币也没有): 请求头注入 / 商品缓存 / 支付替换 / storefront 伪装
  * ============================================================
  */
 
 #import <StoreKit/StoreKit.h>
-#import <objc/runtime.h>
 
-// ===== 目标地区(硬编码, 无配置) =====
-static NSString * const RCK_TARGET_STOREFRONT = @"CHN";
-static NSString * const RCK_TARGET_LOCALE_ID  = @"zh_CN@currency=CNY";
-static NSString * const RCK_TARGET_LOCALE_STR = @"zh_CN";
-
-// ===== 全局 product cache =====
-static NSMutableDictionary *gProductCache = nil;
+// ===== 目标 locale(和 App 商品所在区一致: 国区) =====
+static NSString * const RCK_LOCALE_ID  = @"zh_CN@currency=CNY";
+static NSString * const RCK_LOCALE_STR = @"zh_CN";
 
 #pragma mark - 注入门控(只对第三方 App 生效)
 
@@ -46,142 +40,59 @@ static BOOL RCKIsThirdPartyApp(void) {
     return [NSBundle mainBundle].bundleIdentifier.length > 0;
 }
 
-#pragma mark - 无根外币同款: SKProduct.priceLocale
+#pragma mark - SKProduct: price(原价) + priceLocale(zh_CN)
 
 %hook SKProduct
 
+// 价格数字保持原样(页面仍显示原价; 外币金额由苹果系统弹窗服务端给出)
+- (NSDecimalNumber *)price {
+    return %orig;
+}
+
+// 货币 locale 伪装成 zh_CN
 - (NSLocale *)priceLocale {
     static NSLocale *fakeLocale = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        fakeLocale = [NSLocale localeWithLocaleIdentifier:RCK_TARGET_LOCALE_STR];
+        fakeLocale = [NSLocale localeWithLocaleIdentifier:RCK_LOCALE_STR];
     });
     return fakeLocale;
 }
 
 %end
 
-#pragma mark - 无根外币同款: NSLocale 四个方法(含私有类 _NSPlaceholderLocale)
+#pragma mark - _NSPlaceholderLocale(私有类, NSLocale init 真正实现)
 
-// 无根外币 hook 的是 _NSPlaceholderLocale(私有类, NSLocale init 的真正实现)
 %hook _NSPlaceholderLocale
 
 - (id)initWithLocaleIdentifier:(NSString *)identifier {
     if ([identifier hasPrefix:@"zh"]) return %orig;
-    return %orig(RCK_TARGET_LOCALE_ID);
+    return %orig(RCK_LOCALE_ID);
 }
 
 %end
 
+#pragma mark - NSLocale 三个方法
+
 %hook NSLocale
 
-// 1) 实例 localeIdentifier: 非 zh 一律返回 zh_CN@currency=CNY
+// 实例 localeIdentifier: 非 zh 一律 zh_CN@currency=CNY
 - (NSString *)localeIdentifier {
     NSString *orig = %orig;
     if ([orig hasPrefix:@"zh"]) return orig;
-    return RCK_TARGET_LOCALE_ID;
+    return RCK_LOCALE_ID;
 }
 
-// 2) 类方法 localeWithLocaleIdentifier: 强制构造目标 locale
+// 类方法 localeWithLocaleIdentifier: 强制目标 locale
 + (NSLocale *)localeWithLocaleIdentifier:(NSString *)identifier {
-    return %orig(RCK_TARGET_LOCALE_ID);
+    return %orig(RCK_LOCALE_ID);
 }
 
-// 3) 类方法 canonicalLanguageIdentifierFromString: 非 zh 返回 zh-Hans
+// 类方法 canonicalLanguageIdentifierFromString: 非 zh → zh-Hans
 + (NSString *)canonicalLanguageIdentifierFromString:(NSString *)string {
     NSString *orig = %orig;
     if ([orig hasPrefix:@"zh"]) return orig;
     return @"zh-Hans";
-}
-
-%end
-
-#pragma mark - 切号: 请求层注入 CN storefront
-
-%hook SKProductsRequest
-
-// StoreKit 内部构造 NSURLRequest 时会调 _urlRequest
-- (id)_urlRequest {
-    NSMutableURLRequest *req = %orig;
-    if ([req isKindOfClass:[NSMutableURLRequest class]]) {
-        [req setValue:RCK_TARGET_STOREFRONT forHTTPHeaderField:@"X-Apple-Store-Front"];
-        [req setValue:RCK_TARGET_LOCALE_STR forHTTPHeaderField:@"Accept-Language"];
-    }
-    return req;
-}
-
-%end
-
-#pragma mark - 切号: 响应里的国区 SKProduct 进缓存
-
-%hook SKProductsResponse
-
-- (NSArray *)products {
-    NSArray *list = %orig;
-    if (list.count > 0) {
-        for (SKProduct *p in list) {
-            if (p.productIdentifier) {
-                gProductCache[p.productIdentifier] = p;
-            }
-        }
-        NSLog(@"[RCK] cached %lu products", (unsigned long)list.count);
-    }
-    return list;
-}
-
-%end
-
-#pragma mark - 切号: 支付时替换为缓存的国区商品
-
-%hook SKPayment
-
-+ (id)paymentWithProduct:(SKProduct *)product {
-    if (product && product.productIdentifier) {
-        SKProduct *cached = gProductCache[product.productIdentifier];
-        if (cached && cached != product) {
-            NSLog(@"[RCK] replace with cached CN product: %@", product.productIdentifier);
-            return %orig(cached);
-        }
-    }
-    return %orig;
-}
-
-%end
-
-%hook SKMutablePayment
-
-+ (id)paymentWithProduct:(SKProduct *)product {
-    if (product && product.productIdentifier) {
-        SKProduct *cached = gProductCache[product.productIdentifier];
-        if (cached && cached != product) {
-            return %orig(cached);
-        }
-    }
-    return %orig;
-}
-
-%end
-
-%hook SKPaymentQueue
-
-- (void)addPayment:(SKPayment *)payment {
-    SKProduct *product = nil;
-    @try { product = [payment valueForKey:@"product"]; } @catch (NSException *e) { product = nil; }
-
-    if (product && product.productIdentifier) {
-        SKProduct *cached = gProductCache[product.productIdentifier];
-        if (cached && cached != product) {
-            NSLog(@"[RCK] addPayment: using cached CN product");
-            SKMutablePayment *newPayment = [SKMutablePayment paymentWithProduct:cached];
-            newPayment.quantity = payment.quantity;
-            if ([payment respondsToSelector:@selector(applicationUsername)]) {
-                @try { newPayment.applicationUsername = payment.applicationUsername; } @catch (NSException *e) {}
-            }
-            %orig(newPayment);
-            return;
-        }
-    }
-    %orig;
 }
 
 %end
@@ -191,7 +102,6 @@ static BOOL RCKIsThirdPartyApp(void) {
 %ctor {
     @autoreleasepool {
         if (!RCKIsThirdPartyApp()) return;
-        gProductCache = [NSMutableDictionary dictionary];
-        NSLog(@"[RCK] v2.1 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
+        NSLog(@"[RCK] v2.2 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
     }
 }
