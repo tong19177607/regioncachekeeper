@@ -1,6 +1,6 @@
 Package: com.yourshop.regioncachekeeper
 Name: RegionCacheKeeper
-Version: 2.0.0-1
+Version: 2.1.0-1
 Architecture: iphoneos-arm64
 Description: 切号拉国区 IAP 商品 + 货币显示伪装，安装即生效
 Maintainer: you

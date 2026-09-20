@@ -1,13 +1,14 @@
 /**
- * RegionCacheKeeper v2.0
+ * RegionCacheKeeper v2.1
  * ============================================================
- * 无根外币同款 hook (一模一样, 纯 ObjC) + 切号(请求层注入)
+ * 无根外币同款 hook (从其 dylib 符号逐个还原, 纯 ObjC) + 切号(请求层注入)
  *
- * 无根外币部分(1.17 版本已验证同款):
- *   %hook SKProduct   -priceLocale                    → zh_CN
- *   %hook NSLocale    -localeIdentifier               → zh_CN@currency=CNY
- *   %hook NSLocale    +localeWithLocaleIdentifier:    → zh_CN@currency=CNY
- *   %hook NSLocale    +canonicalLanguageIdentifierFromString: → zh
+ * 无根外币同款 5 hook:
+ *   SKProduct          -priceLocale                        → zh_CN
+ *   _NSPlaceholderLocale -initWithLocaleIdentifier:        → zh_CN@currency=CNY (私有类!)
+ *   NSLocale           -localeIdentifier                   → zh_CN@currency=CNY
+ *   NSLocale           +localeWithLocaleIdentifier:        → zh_CN@currency=CNY
+ *   NSLocale           +canonicalLanguageIdentifierFromString: → zh
  *
  * 切号部分(RegionCacheKeeper):
  *   %hook SKProductsRequest  -_urlRequest  注入 X-Apple-Store-Front: CHN
@@ -60,7 +61,17 @@ static BOOL RCKIsThirdPartyApp(void) {
 
 %end
 
-#pragma mark - 无根外币同款: NSLocale 三个方法
+#pragma mark - 无根外币同款: NSLocale 四个方法(含私有类 _NSPlaceholderLocale)
+
+// 无根外币 hook 的是 _NSPlaceholderLocale(私有类, NSLocale init 的真正实现)
+%hook _NSPlaceholderLocale
+
+- (id)initWithLocaleIdentifier:(NSString *)identifier {
+    if ([identifier hasPrefix:@"zh"]) return %orig;
+    return %orig(RCK_TARGET_LOCALE_ID);
+}
+
+%end
 
 %hook NSLocale
 
@@ -181,6 +192,6 @@ static BOOL RCKIsThirdPartyApp(void) {
     @autoreleasepool {
         if (!RCKIsThirdPartyApp()) return;
         gProductCache = [NSMutableDictionary dictionary];
-        NSLog(@"[RCK] v2.0 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
+        NSLog(@"[RCK] v2.1 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
     }
 }
