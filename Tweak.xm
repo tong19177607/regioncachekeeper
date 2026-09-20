@@ -26,6 +26,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <unistd.h>
 
 // ===== 目标店面：中国区 =====
 static NSString * const RCK_COUNTRY_CODE  = @"CHN";
@@ -43,20 +44,66 @@ static NSString * const RCK_HEADER_NAME   = @"X-Apple-Store-Front";
 @end
 
 // ============================================================
-// 日志：NSLog + App 沙盒 Documents/rck_debug.log
+// 日志：NSLog + 多路径文件（Documents / App tmp / 全局 /tmp）
 // ============================================================
 
-static NSMutableSet *g_logSeen = nil;   // 调用栈去重
+static NSMutableSet *RCKLogSeenSet(void) {
+    static NSMutableSet *set = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ set = [NSMutableSet set]; });
+    return set;
+}
 
-static NSString *RCKLogPath(void) {
-    static NSString *path = nil;
+// 向指定路径追加一行；返回是否成功
+static BOOL RCKAppendLine(NSString *p, NSString *line) {
+    @try {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if (![fm fileExistsAtPath:p]) {
+            if (![fm createFileAtPath:p contents:nil attributes:nil]) {
+                return NO;
+            }
+        }
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:p];
+        if (!fh) return NO;
+        [fh seekToEndOfFile];
+        [fh writeData:[[line stringByAppendingString:@"\n"]
+                       dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh closeFile];
+        return YES;
+    } @catch (NSException *e) {
+        return NO;
+    }
+}
+
+// 最低保障通道：不依赖门控、不依赖 App 沙盒，dylib 一装载就能写
+static void RCKLoaderTrace(NSString *msg) {
+    @autoreleasepool {
+        NSString *line = [NSString stringWithFormat:@"%@ pid=%d %@",
+                          [NSDate date], (int)getpid(), msg];
+        NSLog(@"[RCK-LOAD] %@", line);
+        RCKAppendLine(@"/tmp/rck_inject.log", line);
+    }
+}
+
+static NSArray<NSString *> *RCKLogPaths(void) {
+    static NSArray *paths = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        NSMutableArray *list = [NSMutableArray array];
         NSString *docs = NSSearchPathForDirectoriesInDomains(
             NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-        path = [docs stringByAppendingPathComponent:@"rck_debug.log"];
+        if (docs) {
+            [list addObject:[docs stringByAppendingPathComponent:@"rck_debug.log"]];
+        }
+        NSString *tmpDir = NSTemporaryDirectory();
+        if (tmpDir) {
+            [list addObject:[tmpDir stringByAppendingPathComponent:@"rck_debug.log"]];
+        }
+        NSString *bid = [NSBundle mainBundle].bundleIdentifier ?: @"unknown";
+        [list addObject:[NSString stringWithFormat:@"/tmp/rck_app_%@.log", bid]];
+        paths = list;
     });
-    return path;
+    return paths;
 }
 
 static void RCKLog(NSString *fmt, ...) {
@@ -69,19 +116,8 @@ static void RCKLog(NSString *fmt, ...) {
                       [NSDate date], body];
     NSLog(@"%@", line);
 
-    @try {
-        NSString *p = RCKLogPath();
-        NSFileManager *fm = [NSFileManager defaultManager];
-        if (![fm fileExistsAtPath:p]) {
-            [fm createFileAtPath:p contents:nil attributes:nil];
-        }
-        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:p];
-        [fh seekToEndOfFile];
-        [fh writeData:[[line stringByAppendingString:@"\n"]
-                       dataUsingEncoding:NSUTF8StringEncoding]];
-        [fh closeFile];
-    } @catch (NSException *e) {
-        // 沙盒写失败时 NSLog 仍在
+    for (NSString *p in RCKLogPaths()) {
+        if (RCKAppendLine(p, line)) break;  // 任一通道成功即可
     }
 }
 
@@ -98,9 +134,10 @@ static NSString *RCKStack(NSUInteger skip, NSUInteger maxCount) {
 // 同一签名只输出一次完整调用栈，避免刷屏
 static void RCKLogOnce(NSString *signature, NSString *fmt, ...) {
     BOOL first = NO;
-    @synchronized (g_logSeen) {
-        if (![g_logSeen containsObject:signature]) {
-            [g_logSeen addObject:signature];
+    NSMutableSet *seen = RCKLogSeenSet();
+    @synchronized (seen) {
+        if (![seen containsObject:signature]) {
+            [seen addObject:signature];
             first = YES;
         }
     }
@@ -330,12 +367,25 @@ static NSString *RCKHeaderValue(NSDictionary *headers, NSString *name) {
 
 %ctor {
     @autoreleasepool {
-        if (!RCKIsThirdPartyApp()) return;
+        // 门控前：只要 dylib 被装载，必在 /tmp/rck_inject.log 留痕
+        NSString *rawBid  = [NSBundle mainBundle].bundleIdentifier ?: @"(nil)";
+        NSString *rawPath = [NSBundle mainBundle].bundlePath ?: @"(nil)";
+        NSString *rawHome = NSHomeDirectory() ?: @"(nil)";
+        RCKLoaderTrace([NSString stringWithFormat:
+            @"LOAD start bid=%@ bundlePath=%@ home=%@",
+            rawBid, rawPath, rawHome]);
 
-        g_logSeen = [NSMutableSet set];
+        if (!RCKIsThirdPartyApp()) {
+            RCKLoaderTrace([NSString stringWithFormat:
+                @"LOAD gate=REJECTED bid=%@", rawBid]);
+            return;
+        }
+
+        RCKLoaderTrace([NSString stringWithFormat:
+            @"LOAD gate=PASS bid=%@", rawBid]);
 
         NSString *bid = [NSBundle mainBundle].bundleIdentifier ?: @"?";
-        RCKLog(@"===== RCK v1.0.0 injected app=%@ ios=%@ =====",
+        RCKLog(@"===== RCK v1.0.1 injected app=%@ ios=%@ =====",
                bid, [UIDevice currentDevice].systemVersion);
 
         // 启动 2 秒后记录一次真实账号店面（诊断基线）

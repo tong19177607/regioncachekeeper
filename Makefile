@@ -1,4 +1,4 @@
-# RegionCacheKeeper v1.0.0
+# RegionCacheKeeper v1.0.1
 # SK1 商品请求国区 storefront 注入 + SKStorefront 读取 hook + 诊断日志
 # 纯 ObjC(Logos); 无越狱屏蔽, 无界面, 安装即生效
 ARCHS = arm64 arm64e
