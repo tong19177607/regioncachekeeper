@@ -12,6 +12,9 @@ private let TARGET_LOCALE_STR = "zh_CN"
 
 @objc public class SK2SwiftHook: NSObject {
 
+    // 递归防护
+    private static var inHook = false
+
     /// 安装所有 Swift 端 hook
     @objc public static func install() {
         hookNSLocaleInit()
@@ -20,8 +23,8 @@ private let TARGET_LOCALE_STR = "zh_CN"
         NSLog("[SK2Swift] hooks installed")
     }
 
-    // MARK: - NSLocale init hook (覆盖 localeWithLocaleIdentifier:)
-    // 无根外币核心: 所有通过 initWithLocaleIdentifier: 创建的 locale 都返回 zh_CN
+    // MARK: - NSLocale init hook
+    // 所有通过 initWithLocaleIdentifier: 创建的 locale 都返回 zh_CN
     private static func hookNSLocaleInit() {
         let cls: AnyClass = NSLocale.self
         let original = class_getInstanceMethod(cls, #selector(NSLocale.init(localeIdentifier:)))
@@ -29,14 +32,21 @@ private let TARGET_LOCALE_STR = "zh_CN"
 
         let originalImp = method_getImplementation(original)
 
-        let block: @convention(block) (NSLocale, Selector, String) -> NSLocale = { _, _, identifier in
-            // 如果传入的不是 zh 系列, 强制改成 zh_CN
-            if !identifier.hasPrefix("zh") {
-                return NSLocale(localeIdentifier: TARGET_LOCALE_STR)
+        // block 签名: (id self, SEL _cmd, NSString *identifier) -> id
+        let block: @convention(block) (AnyObject, Selector, NSString) -> AnyObject = { self, cmd, identifier in
+            // 递归防护: 正在 hook 内部时直接调原始实现
+            if SK2SwiftHook.inHook {
+                let orig = unsafeBitCast(originalImp, to: (@convention(c) (AnyObject, Selector, NSString) -> AnyObject).self)
+                return orig(self, cmd, identifier)
             }
-            // 调原始实现
-            let orig = unsafeBitCast(originalImp, to: (@convention(c) (AnyObject, Selector, String) -> NSLocale).self)
-            return orig(self, #selector(NSLocale.init(localeIdentifier:)), TARGET_LOCALE_STR)
+
+            SK2SwiftHook.inHook = true
+            defer { SK2SwiftHook.inHook = false }
+
+            // 强制用 zh_CN 调原始实现 (不通过 Swift init 避免递归)
+            let orig = unsafeBitCast(originalImp, to: (@convention(c) (AnyObject, Selector, NSString) -> AnyObject).self)
+            let result = orig(self, cmd, TARGET_LOCALE_STR as NSString)
+            return result
         }
 
         let newImp = imp_implementationWithBlock(block)
@@ -44,7 +54,6 @@ private let TARGET_LOCALE_STR = "zh_CN"
     }
 
     // MARK: - NSLocale.canonicalLanguageIdentifierFromString: hook
-    // 防止 App 通过语言标识检测真实地区
     private static func hookNSLocaleCanonicalLanguage() {
         let cls: AnyClass = NSLocale.self
         let original = class_getClassMethod(cls, #selector(NSLocale.canonicalLanguageIdentifier(from:)))
@@ -52,12 +61,12 @@ private let TARGET_LOCALE_STR = "zh_CN"
 
         let originalImp = method_getImplementation(original)
 
-        let block: @convention(block) (AnyObject, Selector, String) -> String = { _, _, str in
-            let orig = unsafeBitCast(originalImp, to: (@convention(c) (AnyObject, Selector, String) -> String).self)
-            let result = orig(NSLocale.self, #selector(NSLocale.canonicalLanguageIdentifier(from:)), str)
-            // 如果结果不是 zh 开头, 强制返回 zh-Hans
+        let block: @convention(block) (AnyObject, Selector, NSString) -> NSString = { _, cmd, str in
+            let orig = unsafeBitCast(originalImp, to: (@convention(c) (AnyObject, Selector, NSString) -> NSString).self)
+            let result = orig(NSLocale.self, cmd, str)
+            // 非 zh 开头强制返回 zh-Hans
             if !result.hasPrefix("zh") {
-                return "zh-Hans"
+                return "zh-Hans" as NSString
             }
             return result
         }
@@ -67,7 +76,6 @@ private let TARGET_LOCALE_STR = "zh_CN"
     }
 
     // MARK: - NSLocale.components(fromLocaleIdentifier:) hook
-    // 防止 App 解析 locale identifier 拿到真实地区代码
     private static func hookNSLocaleComponents() {
         let cls: AnyClass = NSLocale.self
         let original = class_getClassMethod(cls, #selector(NSLocale.components(fromLocaleIdentifier:)))
@@ -75,10 +83,10 @@ private let TARGET_LOCALE_STR = "zh_CN"
 
         let originalImp = method_getImplementation(original)
 
-        let block: @convention(block) (AnyObject, Selector, String) -> [String: String] = { _, _, identifier in
+        let block: @convention(block) (AnyObject, Selector, NSString) -> NSDictionary = { _, cmd, _ in
             // 强制用 zh_CN@currency=CNY 解析
-            let orig = unsafeBitCast(originalImp, to: (@convention(c) (AnyObject, Selector, String) -> [String: String]).self)
-            return orig(NSLocale.self, #selector(NSLocale.components(fromLocaleIdentifier:)), TARGET_LOCALE_ID)
+            let orig = unsafeBitCast(originalImp, to: (@convention(c) (AnyObject, Selector, NSString) -> NSDictionary).self)
+            return orig(NSLocale.self, cmd, TARGET_LOCALE_ID as NSString)
         }
 
         let newImp = imp_implementationWithBlock(block)
