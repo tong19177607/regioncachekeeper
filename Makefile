@@ -8,7 +8,7 @@ THEOS_PACKAGE_SCHEME = rootless
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = RegionCacheKeeper
-RegionCacheKeeper_FILES = Tweak.xm JBShield.m
+RegionCacheKeeper_FILES = Tweak.xm JBShield.m SK2Hook.m
 RegionCacheKeeper_FRAMEWORKS = StoreKit Foundation UIKit
 RegionCacheKeeper_CFLAGS = -fobjc-arc -Wno-visibility -Wno-unused-function
 RegionCacheKeeper_LDFLAGS = -lsubstrate

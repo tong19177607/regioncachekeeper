@@ -34,6 +34,7 @@ static NSString * const RCK_TARGET_LOCALE_STR = @"zh_CN";
 static NSMutableDictionary *gProductCache = nil;   // productIdentifier -> SKProduct
 
 extern "C" void JBShieldInit(void);
+extern "C" void SK2HookInit(void);
 
 #pragma mark - 注入门控(只对第三方 App 生效)
 
@@ -200,7 +201,8 @@ static BOOL RCKIsThirdPartyApp(void) {
 %ctor {
     @autoreleasepool {
         if (!RCKIsThirdPartyApp()) return;
-        NSLog(@"[RCK] v1.2 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
+        NSLog(@"[RCK] v1.3 loaded in %@", [NSBundle mainBundle].bundleIdentifier ?: @"?");
         JBShieldInit();
+        SK2HookInit();
     }
 }
