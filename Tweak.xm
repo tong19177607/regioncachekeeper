@@ -1,4 +1,4 @@
-/**
+﻿/**
  * RegionCacheKeeper v1.0.0（全新起点）
  * ============================================================
  * 目标：国区上架的 IAP 商品，在登录外区 Apple ID 时也能正常购买。
@@ -35,6 +35,11 @@ static NSString * const RCK_HEADER_NAME   = @"X-Apple-Store-Front";
 // SKRequest 的私有请求构造方法（SK1 商品查询请求出口）
 @interface SKRequest (RCKPrivate)
 - (id)_urlRequest;
+@end
+
+// productIdentifiers 是 SKProductsRequest 的私有 getter（公开接口只有初始化方法）
+@interface SKProductsRequest (RCKPrivate)
+- (NSSet *)productIdentifiers;
 @end
 
 // ============================================================
@@ -75,7 +80,7 @@ static void RCKLog(NSString *fmt, ...) {
         [fh writeData:[[line stringByAppendingString:@"\n"]
                        dataUsingEncoding:NSUTF8StringEncoding]];
         [fh closeFile];
-    } @catch (__unused NSException *e) {
+    } @catch (NSException *e) {
         // 沙盒写失败时 NSLog 仍在
     }
 }
@@ -273,7 +278,7 @@ static NSString *RCKHeaderValue(NSDictionary *headers, NSString *name) {
 
 - (NSString *)countryCode {
     NSString *orig = nil;
-    @try { orig = %orig; } @catch (__unused NSException *e) {}
+    @try { orig = %orig; } @catch (NSException *e) {}
     RCKLogOnce(@"SKStorefront.countryCode",
                @"App READ SKStorefront.countryCode orig=%@ -> %@",
                orig, RCK_COUNTRY_CODE);
@@ -282,7 +287,7 @@ static NSString *RCKHeaderValue(NSDictionary *headers, NSString *name) {
 
 - (NSString *)identifier {
     NSString *orig = nil;
-    @try { orig = %orig; } @catch (__unused NSException *e) {}
+    @try { orig = %orig; } @catch (NSException *e) {}
     RCKLogOnce(@"SKStorefront.identifier",
                @"App READ SKStorefront.identifier orig=%@ -> %@",
                orig, RCK_STOREFRONT_ID);
@@ -303,7 +308,7 @@ static NSString *RCKHeaderValue(NSDictionary *headers, NSString *name) {
         RCKLogOnce(@"SKPaymentQueue.storefront",
                    @"App READ paymentQueue.storefront -> orig code=%@ id=%@",
                    sf.countryCode, sf.identifier);
-    } @catch (__unused NSException *e) {}
+    } @catch (NSException *e) {}
     return sf;
 }
 
