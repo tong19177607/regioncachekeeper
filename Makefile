@@ -1,6 +1,6 @@
-# RegionCacheKeeper v1.5
-# 切号(storefront 注入拉国区商品) + 无根外币(NSLocale/SKProduct 伪装)
-# ObjC + Swift 混编; 无越狱屏蔽, 无界面, 安装即生效
+# RegionCacheKeeper v1.0.0
+# SK1 商品请求国区 storefront 注入 + SKStorefront 读取 hook + 诊断日志
+# 纯 ObjC(Logos); 无越狱屏蔽, 无界面, 安装即生效
 ARCHS = arm64 arm64e
 TARGET = iphone:clang:latest:15.0
 THEOS_PACKAGE_SCHEME = rootless
