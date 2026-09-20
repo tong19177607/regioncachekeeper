@@ -13,7 +13,10 @@
 #import <errno.h>
 #import <sys/sysctl.h>
 #import <mach-o/dyld.h>
-#import <pthread.h>
+#import <substrate.h>
+#import <stdarg.h>
+
+// stat64 在现代 iOS SDK 上不可见, 用 stat 即可 (64-bit 上 stat == stat64)
 
 // ===== 需要屏蔽的越狱特征路径 =====
 static NSArray *JBPaths(void) {
@@ -86,17 +89,14 @@ static BOOL JBIsJailbreakPath(const char *cpath) {
 
 // ===== 原始函数指针 =====
 typedef int (*JB_stat_t)(const char *, struct stat *);
-typedef int (*JB_stat64_t)(const char *, struct stat64 *);
 typedef int (*JB_access_t)(const char *, int);
 typedef int (*JB_faccessat_t)(int, const char *, int, int);
 typedef FILE *(*JB_fopen_t)(const char *, const char *);
 typedef int (*JB_open_t)(const char *, int, ...);
 typedef pid_t (*JB_fork_t)(void);
 typedef void *(*JB_dlopen_t)(const char *, int);
-typedef int (*JB_sysctl_t)(int *, u_int, void *, size_t *, void *, size_t);
 
 static JB_stat_t       orig_stat = NULL;
-static JB_stat64_t     orig_stat64 = NULL;
 static JB_access_t     orig_access = NULL;
 static JB_faccessat_t  orig_faccessat = NULL;
 static JB_fopen_t      orig_fopen = NULL;
@@ -109,11 +109,6 @@ static JB_dlopen_t     orig_dlopen = NULL;
 static int hooked_stat(const char *path, struct stat *buf) {
     if (JBIsJailbreakPath(path)) { errno = ENOENT; return -1; }
     return orig_stat(path, buf);
-}
-
-static int hooked_stat64(const char *path, struct stat64 *buf) {
-    if (JBIsJailbreakPath(path)) { errno = ENOENT; return -1; }
-    return orig_stat64(path, buf);
 }
 
 static int hooked_access(const char *path, int mode) {
@@ -173,12 +168,8 @@ static void *hooked_dlopen(const char *path, int mode) {
 // 使用 dlsym(RTLD_NEXT, ...) 获取原始地址, 直接写 GOT
 
 static void JBDecorate(void) {
-    // 用 dlopen(RTLD_DEFAULT) 获取符号地址
     void *handle = RTLD_DEFAULT;
-
-    // stat / stat64
     orig_stat = dlsym(handle, "stat");
-    orig_stat64 = dlsym(handle, "stat64");
     orig_access = dlsym(handle, "access");
     orig_faccessat = dlsym(handle, "faccessat");
     orig_fopen = dlsym(handle, "fopen");
@@ -186,42 +177,18 @@ static void JBDecorate(void) {
     orig_fork = dlsym(handle, "fork");
     orig_dlopen = dlsym(handle, "dlopen");
 
-    // 手动替换 GOT (fishhook 原理, 但简化版用 objc_msgSend 不行, 需要直接内存写)
-    // 这里用 MSHookFunction (MobileSubstrate 提供)
-#if __has_include(<substrate.h>)
-    MSHookFunction((void *)orig_stat, (void *)hooked_stat, (void **)&orig_stat);
-    MSHookFunction((void *)orig_stat64, (void *)hooked_stat64, (void **)&orig_stat64);
-    MSHookFunction((void *)orig_access, (void *)hooked_access, (void **)&orig_access);
-    MSHookFunction((void *)orig_faccessat, (void *)hooked_faccessat, (void **)&orig_faccessat);
-    MSHookFunction((void *)orig_fopen, (void *)hooked_fopen, (void **)&orig_fopen);
-    MSHookFunction((void *)orig_open, (void *)hooked_open, (void **)&orig_open);
-    MSHookFunction((void *)orig_dlopen, (void *)hooked_dlopen, (void **)&orig_dlopen);
-#endif
+    if (orig_stat)    MSHookFunction((void *)orig_stat,    (void *)hooked_stat,    (void **)&orig_stat);
+    if (orig_access)  MSHookFunction((void *)orig_access,  (void *)hooked_access,  (void **)&orig_access);
+    if (orig_faccessat) MSHookFunction((void *)orig_faccessat, (void *)hooked_faccessat, (void **)&orig_faccessat);
+    if (orig_fopen)   MSHookFunction((void *)orig_fopen,   (void *)hooked_fopen,   (void **)&orig_fopen);
+    if (orig_open)    MSHookFunction((void *)orig_open,    (void *)hooked_open,    (void **)&orig_open);
+    if (orig_dlopen)  MSHookFunction((void *)orig_dlopen,  (void *)hooked_dlopen,  (void **)&orig_dlopen);
 }
 
-// ===== ObjC 层越狱检测屏蔽 =====
-
-@interface JBUIDeviceMask : NSObject
-@end
-
-@implementation JBUIDeviceMask
-
-+ (void)jbMaskUIDevice {
-    Class cls = objc_getClass("UIDevice");
-    if (!cls) return;
-
-    // 确保 identifierForVendor 返回一个稳定的值 (iOS 里 identifierForVendor 在越狱设备上行为可能异常)
-    // model / name / systemVersion 保持原值, 越狱检测一般不看这些
-}
-
-@end
-
-// ===== 初始化 =====
-__attribute__((constructor))
-static void JBInit(void) {
-    // 等 MobileSubstrate 加载完
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
+// ===== 公开给 Tweak.xm 调用 =====
+void JBShieldInit(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
         JBDecorate();
         NSLog(@"[JBShield] hooks installed");
     });

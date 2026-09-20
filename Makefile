@@ -10,7 +10,8 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = RegionCacheKeeper
 RegionCacheKeeper_FILES = Tweak.xm JBShield.m
 RegionCacheKeeper_FRAMEWORKS = StoreKit Foundation UIKit
-RegionCacheKeeper_CFLAGS = -fobjc-arc
+RegionCacheKeeper_CFLAGS = -fobjc-arc -Wno-visibility
+RegionCacheKeeper_LDFLAGS = -lsubstrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
