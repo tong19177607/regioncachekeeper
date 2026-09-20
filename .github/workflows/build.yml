@@ -9,7 +9,7 @@ jobs:
   build:
     name: Theos make package (rootless)
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,13 +17,28 @@ jobs:
       - name: Install build dependencies
         run: |
           brew update
-          brew install make xz zstd dpkg ldid
+          brew install make xz zstd dpkg ldid || true
+          brew remove --ignore-dependencies fakeroot >/dev/null 2>&1 || true
+
+      - name: Cache Theos
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/theos
+            ~/.theos
+          key: ${{ runner.os }}-theos-v2
+          restore-keys: |
+            ${{ runner.os }}-theos-
 
       - name: Install Theos
         run: |
           export THEOS="$HOME/theos"
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          if [ ! -d "$THEOS" ] || [ ! -f "$THEOS/makefiles/common.mk" ]; then
+            bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          fi
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "THEOS installed at $THEOS"
+          ls -la "$THEOS/" | head -20
 
       - name: Build .deb
         run: |
